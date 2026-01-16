@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ebuild - test UI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>ebuild — Test UI</h1>
+    <div class="login-right">
+      <div id="loginForm">
+        <input id="loginUsername" placeholder="username" />
+        <input id="loginPassword" placeholder="password" type="password" />
+        <div>
+          <button id="btnLogin">Login</button>
+          <a href="/static/register.html">register</a>
+        </div>
+      </div>
+      <div id="userInfo" style="display:none;">
+        <strong id="currentUser"></strong>
+        <button id="btnLogout">Logout</button>
+      </div>
+      
+    </div>
+  </header>
+
+  <div class="container">
+    <main class="main">
+      <section id="search">
+        <input id="q" placeholder="Search packages..." />
+        <button id="btnSearch">Search</button>
+        <div id="results"></div>
+      </section>
+
+      <section id="packageView" style="display:none;">
+        <h2 id="pkgName"></h2>
+        <div id="pkgDesc"></div>
+        <h3>Versions</h3>
+        <ul id="versions"></ul>
+
+        <h3>Publish New Version</h3>
+        <div>
+          <input id="newVersion" placeholder="1.2.3" />
+          <input id="newMetadata" placeholder="metadata JSON" />
+          <button id="btnPublish">Publish</button>
+        </div>
+
+        <h3>Artifacts (selected version)</h3>
+        <ul id="artifacts"></ul>
+        <div>
+          <input id="artifactBlob" placeholder="blob_url" />
+          <input id="artifactFile" placeholder="filename" />
+          <input id="artifactSize" placeholder="size_bytes" />
+          <button id="btnAddArtifact">Add Artifact</button>
+        </div>
+
+        <h3>Comments</h3>
+        <div id="comments"></div>
+        <textarea id="commentBody" placeholder="Write a comment..."></textarea>
+        <button id="btnComment">Post Comment</button>
+      </section>
+    </main>
+
+    <aside class="rightbar">
+      <div class="create-package">
+        <h2>Create Package</h2>
+        <input id="newPkgName" placeholder="package name" />
+        <input id="newPkgDesc" placeholder="description" />
+        <button id="btnCreatePackage">Create Package</button>
+        <div id="createPackageResult"></div>
+      </div>
+    </aside>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+header.topbar { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; background:#f5f5f5; border-bottom:1px solid #ddd }
+header.topbar h1 { margin:0 }
+.login-right input { margin-right:8px; padding:6px }
+.container { display:flex; gap:16px; padding:20px; }
+.main { flex:1; max-width:1000px }
+.single { max-width:640px; margin:40px auto; padding:20px }
+.rightbar { width:320px; position:sticky; top:16px; height:calc(100vh - 32px); align-self:flex-start }
+.create-package { background:#fff; border:1px solid #ddd; padding:12px; border-radius:6px }
+.pkg { padding: 8px; border-bottom: 1px solid #ddd; }
+#packageView { margin-top: 20px; padding: 12px; border: 1px solid #ccc; }
+input, textarea { display:block; margin:6px 0; padding:6px; width: 100%; box-sizing:border-box }
+button { padding:6px 12px; margin:6px 0 }
+
+/* small screens */
+@media (max-width: 800px) {
+	.container { flex-direction:column }
+	.rightbar { position:relative; width:auto; height:auto }
+	.login-right input { display:none }
+}
+
+/* error state for inputs */
+.error-field { background: #ffe6e6; border-color: #ff4d4d }

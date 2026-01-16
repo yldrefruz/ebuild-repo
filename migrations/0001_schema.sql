@@ -1,0 +1,85 @@
+-- +goose Up
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'public',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS packages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+  token_required INTEGER NOT NULL DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS buckets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS package_categories (
+  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  PRIMARY KEY (package_id, category_id)
+);
+
+CREATE TABLE IF NOT EXISTS package_buckets (
+  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+  bucket_id INTEGER NOT NULL REFERENCES buckets(id) ON DELETE CASCADE,
+  PRIMARY KEY (package_id, bucket_id)
+);
+
+CREATE TABLE IF NOT EXISTS votes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+  value INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, package_id)
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+  package_version_id INTEGER NULL,
+  body TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
+  is_generated INTEGER NOT NULL DEFAULT 0,
+  scopes TEXT,
+  allowed_package_ids TEXT,
+  revoked_at DATETIME NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS packages_fts USING fts5(name, description, content='packages', content_rowid='id');
+
+-- +goose Down
+DROP TABLE IF EXISTS packages_fts;
+DROP TABLE IF EXISTS tokens;
+DROP TABLE IF EXISTS comments;
+DROP TABLE IF EXISTS votes;
+DROP TABLE IF EXISTS package_buckets;
+DROP TABLE IF EXISTS package_categories;
+DROP TABLE IF EXISTS buckets;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS packages;
+DROP TABLE IF EXISTS users;

@@ -1,0 +1,28 @@
+# Binaries
+/bin/
+/*.exe
+/*.dll
+/*.so
+/*.dylib
+
+# Vendor
+/vendor/
+
+# IDE
+.vscode/
+.idea/
+
+# Build / test
+*.out
+
+# SQLC
+sqlc.yaml
+
+# Local DB
+dev.db
+
+# Node modules if any
+node_modules/
+
+server.log
+go.sum
