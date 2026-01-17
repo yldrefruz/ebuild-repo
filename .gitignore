@@ -26,3 +26,10 @@ node_modules/
 
 *.log
 go.sum
+#report files
+report.synctex.gz
+report.aux
+report.bbl
+report.bcf
+report.blg
+report.run.xml

@@ -1,1 +1,654 @@
-\documentclass{Report}
+\documentclass[10pt,a4paper,twocolumn,final]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{textcomp}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{titlepic}
+\usepackage[style=numeric, natbib=true]{biblatex}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{upquote}
+
+\definecolor{codebg}{rgb}{0.98,0.98,0.98}
+\definecolor{codeframe}{rgb}{0.85,0.85,0.85}
+\definecolor{codekw}{rgb}{0.20,0.20,0.70}
+\definecolor{codecom}{rgb}{0.00,0.45,0.00}
+\definecolor{codestr}{rgb}{0.60,0.10,0.10}
+
+\lstdefinelanguage{SQL}{
+	morekeywords={SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,FROM,WHERE,JOIN,LEFT,RIGHT,INNER,OUTER,VALUES,INTO,ON,ORDER,BY,LIMIT,AND,OR,NOT,NULL,AS,IN,EXISTS,SET,PRIMARY,KEY,FOREIGN,REFERENCES,UNIQUE,DEFAULT,CASCADE,CONFLICT,DO,VIEW,VIRTUAL,USING,MATCH,COALESCE,RANDOM,DATETIME},
+	sensitive=true,
+	morecomment=[l]{--},
+	morestring=[b]'
+}
+
+\lstdefinelanguage{bash}{
+	keywords={
+		if, then, else, elif, fi,
+		for, do, done, while, in, case, esac,
+		function, select, until, time,
+		break, continue, return, exit,
+		export, readonly, local, unset,
+		shift, getopts, source
+	},
+	morekeywords={
+		sudo, cd, ls, grep, awk, sed, find, xargs,
+		echo, printf, cat, chmod, chown, mkdir, rmdir,
+		rm, mv, cp, ln, touch, kill, ps, top, tar,
+		curl, wget, make, gcc, clang
+	},
+	sensitive=true,
+	comment=[l]{\#},
+	morestring=[b]",
+	morestring=[b]',
+	keywordstyle=[2]\color{purple},
+	morekeywords=[3]{\$, \{, \}, \(, \), \[, \]},
+	keywordstyle=[3]\color{purple},
+	alsoletter={\$}
+}
+
+
+\lstdefinestyle{ebuild}{
+	basicstyle=\ttfamily\footnotesize,
+	columns=fullflexible,
+	keepspaces=true,
+	showstringspaces=false,
+	breaklines=true,
+	breakatwhitespace=false,
+	frame=single,
+	framerule=0.25pt,
+	rulecolor=\color{codeframe},
+	backgroundcolor=\color{codebg},
+	tabsize=2,
+	keywordstyle=\color{codekw}\bfseries,
+	commentstyle=\color{codecom},
+	stringstyle=\color{codestr},
+	aboveskip=0.6em,
+	belowskip=0.6em
+}
+\lstset{style=ebuild}
+\title{Design and Implementation of ebuild-repo Project}
+\author{Ali Efruz YILDIRIR (64230018)}
+
+\addbibresource{report.bib}
+
+\titlepic{\includegraphics[width=10cm]{ankara-medipol.png}}
+
+\begin{document}
+\maketitle	
+
+\begin{abstract}
+\verb|ebuild-repo| is a lightweight backend service that provides a RESTful API and a grounded relational storage layer for publishing, searching, and versioning ebuild package metadata. The system models packages, maintainers, versions, and token-audit records in a normalized SQL schema optimized for read-heavy queries and straightforward migration (see the migrations directory). The database layer encapsulates persistence and transactional logic, exposing concise interfaces for CRUD operations, version history, and indexing of searchable fields.
+
+The RESTful API follows resource-oriented principles: endpoints accept and return JSON representations of packages, versions, and user actions, use JWT-based authentication for protected routes, and implement pagination and filtering for efficient discovery. Endpoints are mapped to handler functions which validate input, orchestrate store transactions, and translate domain errors into HTTP status codes. Together, the database schema and API contract prioritize data integrity, auditability, and predictable performance for common operations (publish, update, search, and fetch version manifests), enabling integration with web clients and automated tooling that manage ebuild lifecycle at scale.
+
+The RESTful API is modelled for usage in a \verb|cli| application. But the project also supplies a very basic web frontend that supports the login, register, logout, package, version, artifact operations.
+
+Many C/C++ projects rely on scattered build scripts, ad-hoc metadata files, or private registries, which complicates consistent versioning, reproducible builds, and automated discovery. ebuild-repo centralizes build manifests and version metadata for a custom C/C++ build system (namely the repo in github yldrefruz/ebuild), providing a single, auditable source of truth with explicit version history and token-audit trails. By exposing this data via a well-defined RESTful API, the service reduces synchronization errors between maintainers and automation, enables efficient search and filtering of build artifacts, and supplies the authentication and audit logging required for secure, automated build and deployment pipelines.
+\end{abstract}
+\section{Framework}
+The project utilizes many different libraries and other thirdparty software for managing the database. Since developers should be able to iterate quickly on the project the project uses sqlite3 in a development environment meanwhile using postgresql in a release environment. The connection to the databases are managed through a connection string that can be specified as an environment variable or in the config.
+
+\subsection{pressly/goose}
+Goose is a database migration tool. It is written in go and supports sql migrations with annotations\cite{presslygoosepage}.
+Migrations with these tools should be written for bot directions. 
+An up section looks like this:
+\begin{lstlisting}[language=SQL, caption={goose up migration}]
+	-- +goose Up
+	CREATE TABLE IF NOT EXISTS users (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT NOT NULL UNIQUE,
+	email TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	role TEXT NOT NULL DEFAULT 'public',
+	created_at DATETIME DEFAULT 
+	CURRENT_TIMESTAMP
+	);
+\end{lstlisting}
+Meanwhile a down section looks like this:
+\begin{lstlisting}[language=SQL, caption={goose down migration}]
+	-- +goose Down
+	DROP TABLE IF EXISTS packages_fts;
+	DROP TABLE IF EXISTS tokens;
+	DROP TABLE IF EXISTS comments;
+	DROP TABLE IF EXISTS votes;
+	DROP TABLE IF EXISTS package_buckets;
+	DROP TABLE IF EXISTS package_categories;
+	DROP TABLE IF EXISTS buckets;
+	DROP TABLE IF EXISTS categories;
+	DROP TABLE IF EXISTS packages;
+	DROP TABLE IF EXISTS users;
+\end{lstlisting}
+Database is migrated with a command like this:
+\begin{lstlisting}[language=bash, caption={output of the goose up command}]
+	$ goose up
+	  OK    001_basics.sql
+	  OK    002_next.sql
+	  OK    003_and_again.go
+\end{lstlisting}
+
+this applies only the sections with
+\verb|-- +goose Up|. The state of the database is stored inside the database.
+It stores the applied migrations inside of a table. Then based on these migrations, the database is updated.
+\subsection{SQLite}
+SQLite is a C-language library that implements a small, fast, self-contained, high-reliability, full-featured, SQL database engine. SQLite is the most used database engine in the world. SQLite is built into all mobile phones and most computers and comes bundled inside countless other applications that people use every day\cite{sqlitehome}.
+
+This library has bindings for multiple programming languages. go is one of them, so I used the 
+binding \url{https://github.com/mattn/go-sqlite3}.
+SQLite is used only in development to allow fast-iterations and quick inspections. Program still uses PostgreSQL in production.
+\subsection{PostgreSQL}
+PostgreSQL is world's most advanced open source relational database. It is powerful and efficient\cite{postgreqsqlhome}. Thjs database is used only in production mode since it requires a somewhat complex installation and is hard to inspect for what is happening in the background. Also PostgreSQL has features that SQLite doesn't have so some of the features unfortunately are not used.
+\subsection{golang}
+Go is expressive, concise, clean, and efficient. Its concurrency mechanisms make it easy to write programs that get the most out of multicore and networked machines, while its novel type system enables flexible and modular program construction. Go compiles quickly to machine code yet has the convenience of garbage collection and the power of run-time reflection. It's a fast, statically typed, compiled language that feels like a dynamically typed, interpreted language\cite{godevdoc}.
+
+This programming language is mainly selected because its support for the framework elements listed above and it being compiled to native code instead of being interpreted.
+
+\section{Initial Tables}
+The database is initialized with the below code.
+\subsection{Users Table}
+The user table describes what an user is, stores the hash of their password, role, creation time, etc. The table can still be expanded to include various other data. For example a user can be deleted or banned permanently. But for this implementation of package manager we don't need this for this development stage. Columns can still be added with creating a new migration
+\begin{lstlisting}[language=SQL, caption={users}]
+	CREATE TABLE IF NOT EXISTS users (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT NOT NULL UNIQUE,
+	email TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	role TEXT NOT NULL DEFAULT 'public',
+	created_at DATETIME DEFAULT
+	 CURRENT_TIMESTAMP
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[id] the unique id of the user. This is the actual identifier of the user.
+	\item[username] here stored as text must be unique. But it would actually be better to store as VARCHAR(32) since the storage of \verb|TEXT| is virtually infinite.
+	\item[email] the mail of the user, must be unique. If not unique the database will error and the user will see that this email is used. The storage of text type is wrong, it should be VARCHAR(128)
+	\item[password\_hash] hash of the password user passed in with a salt. The password itself is stored as hash since in the case of a leak, the hash will leak not the actual password of the user, this even though not fully secure, gives a little bit of a security.
+	\item[role] the role of the user. May be admin or public. If the role is admin, the user can change any packages information or artifacts.
+	\item[created\_at] the creation date of the user's account.
+\end{description}
+
+\subsection{Packages Table}
+The packages table stores metadata about packages published in the registry: name, description, creator, token requirement and creation time.
+
+\begin{lstlisting}[language=SQL, caption={packages}]
+	CREATE TABLE IF NOT EXISTS packages (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	description TEXT,
+	created_by INTEGER NOT NULL REFERENCES
+	 users(id) ON DELETE SET NULL,
+	token_required INTEGER NOT NULL DEFAULT 1,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[id] the unique identifier for the package.
+	\item[name] package name, must be unique.
+	\item[description] optional textual description of the package.
+	\item[created\_by] references users(id); identifies the creator/owner. Note: the schema sets NOT NULL together with ON DELETE SET NULL which is contradictory — make this column nullable or change the foreign-key action.
+	\item[token\_required] boolean-like flag (stored as INTEGER) indicating whether a token is required to publish/manage the package (1 = required, 0 = not required).
+	\item[created\_at] timestamp when the package record was created (defaults to CURRENT\_TIMESTAMP).
+\end{description}
+
+\subsection{Categories Table}
+Stores package categories used to organize packages.
+
+\begin{lstlisting}[language=SQL, caption={categories}]
+	CREATE TABLE IF NOT EXISTS categories (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	description TEXT
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[id] unique identifier for the category.
+	\item[name] category name, must be unique.
+	\item[description] optional description.
+\end{description}
+
+\subsection{Buckets Table}
+Logical groupings (buckets) for packages.
+
+\begin{lstlisting}[language=SQL, caption={buckets}]
+	CREATE TABLE IF NOT EXISTS buckets (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	description TEXT
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[id] unique identifier for the bucket.
+	\item[name] bucket name, must be unique.
+	\item[description] optional description.
+\end{description}
+
+\subsection{Package-Categories Join Table}
+Many-to-many relation between packages and categories.
+
+\begin{lstlisting}[language=SQL, caption={package categories}]
+	CREATE TABLE IF NOT EXISTS 
+	package_categories (
+	package_id INTEGER NOT NULL
+	 REFERENCES packages(id) ON
+	  DELETE CASCADE,
+	category_id INTEGER NOT NULL
+	 REFERENCES categories(id)
+	  ON DELETE CASCADE,
+	PRIMARY KEY (package_id, category_id)
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[package\_id] references packages.id; cascade on package deletion.
+	\item[category\_id] references categories.id; cascade on category deletion.
+	\item[PRIMARY KEY] composite key prevents duplicate assignments.
+\end{description}
+
+\subsection{Package-Buckets Join Table}
+Many-to-many relation between packages and buckets.
+
+\begin{lstlisting}[language=SQL, caption={package buckets}]
+	CREATE TABLE IF NOT EXISTS
+	 package_buckets (
+	package_id INTEGER NOT NULL
+	 REFERENCES packages(id) ON
+	  DELETE CASCADE,
+	bucket_id INTEGER NOT NULL
+	 REFERENCES buckets(id) ON
+	  DELETE CASCADE,
+	PRIMARY KEY (package_id, bucket_id)
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[package\_id] references packages.id; cascade on package deletion.
+	\item[bucket\_id] references buckets.id; cascade on bucket deletion.
+	\item[PRIMARY KEY] composite key prevents duplicate assignments.
+\end{description}
+
+\subsection{Votes Table}
+Stores user votes for packages (one vote per user per package).
+
+\begin{lstlisting}[language=SQL, caption={votes}]
+	CREATE TABLE IF NOT EXISTS
+	 votes (
+	id INTEGER PRIMARY KEY
+	 AUTOINCREMENT,
+	user_id INTEGER NOT NULL
+	 REFERENCES users(id) ON
+	  DELETE CASCADE,
+	package_id INTEGER NOT NULL
+	 REFERENCES packages(id) ON
+	  DELETE CASCADE,
+	value INTEGER NOT NULL,
+	created_at DATETIME DEFAULT
+	 CURRENT_TIMESTAMP,
+	UNIQUE(user_id, package_id)
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[id] vote id.
+	\item[user\_id] voter, cascades on user deletion.
+	\item[package\_id] target package, cascades on package deletion.
+	\item[value] numeric vote value (e.g. -1/1 or score).
+	\item[created\_at] timestamp.
+	\item[UNIQUE] prevents multiple votes by the same user for a package.
+\end{description}
+
+\subsection{Comments Table}
+User comments on packages (optionally tied to a package version).
+
+\begin{lstlisting}[language=SQL, caption={comments}]
+	CREATE TABLE IF NOT EXISTS comments (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id INTEGER NOT NULL REFERENCES
+	 users(id) ON DELETE CASCADE,
+	package_id INTEGER NOT NULL REFERENCES
+	 packages(id) ON DELETE CASCADE,
+	package_version_id INTEGER NULL,
+	body TEXT NOT NULL,
+	created_at DATETIME DEFAULT
+	 CURRENT_TIMESTAMP
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[id] comment id.
+	\item[user\_id] author, cascades on user deletion.
+	\item[package\_id] related package, cascades on package deletion.
+	\item[package\_version\_id] optional link to a package version.
+	\item[body] comment text.
+	\item[created\_at] timestamp.
+\end{description}
+
+\subsection{Tokens Table}
+API/auth tokens owned by users.
+
+\begin{lstlisting}[language=SQL, caption={Tokens}]
+	CREATE TABLE IF NOT EXISTS tokens (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_user_id INTEGER NOT NULL
+	 REFERENCES users(id) ON DELETE CASCADE,
+	token_hash TEXT NOT NULL,
+	is_generated INTEGER NOT NULL DEFAULT 0,
+	scopes TEXT,
+	allowed_package_ids TEXT,
+	revoked_at DATETIME NULL,
+	created_at DATETIME DEFAULT
+	 CURRENT_TIMESTAMP
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[id] token id.
+	\item[owner\_user\_id] owner user, cascades on user deletion.
+	\item[token\_hash] hashed token value.
+	\item[is\_generated] boolean-like flag for generated tokens.
+	\item[scopes] text list of scopes.
+	\item[allowed\_package\_ids] text list (e.g. CSV/JSON) limiting package access.
+	\item[revoked\_at] nullable revocation timestamp.
+	\item[created\_at] creation timestamp.
+\end{description}
+
+\subsection{Packages Full-Text Search (FTS)}
+Virtual table for searching package name/description via FTS5. This is an extension for SQLite,
+not available on all distributions of SQLite.
+
+\begin{lstlisting}[language=SQL, caption={FTS5 virtual table}]
+	CREATE VIRTUAL TABLE IF NOT
+	 EXISTS packages_fts USING fts5(
+	name, description,
+	 content='packages', content_rowid='id'
+	);
+\end{lstlisting}
+
+\begin{description}
+	\item[FTS table] provides fast full-text searching on packages.name and packages.description.
+	\item[content/content\_rowid] linked to the packages table; syncing may require triggers or manual updates.
+\end{description}
+
+\section{Extensive view of the API and Database Queries}
+The RESTful api and the database works together. So in this section the two will be explained together.
+
+\subsection{Server bootstrap and runtime configuration}
+The server entrypoint is implemented in the file \path{cmd/server/main.go}. In development mode the project uses SQLite via \verb|github.com/mattn/go-sqlite3|. The database location is controlled by the environment variable \verb|DEV_DB| (defaults to \verb|dev.db|).
+
+\begin{lstlisting}[language=Go,caption={Development server bootstrap (SQLite + Gin)}]
+dbPath := os.Getenv("DEV_DB")
+if dbPath == "" { dbPath = "dev.db" }
+db, err := sqlx.Open("sqlite3", dbPath)
+
+signingKey := []byte("dev-signing-key")
+r := api.SetupRouter(db, signingKey)
+r.Run(":8080")
+\end{lstlisting}
+
+\subsection{Routing overview (Gin)}
+HTTP endpoints are registered in \path{internal/api/router.go}. Each route is mapped to a handler function (usually one file per feature). Protected routes are enforced using JWT scopes via \verb|RequireScope|.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Method} & \textbf{Path} & \textbf{Purpose} \\
+\midrule
+GET  & /health & Health check (always returns \texttt{\{"status":"ok"\}}). \\
+POST & /register & Create a user account. \\
+POST & /login & Authenticate, return access token, set refresh + CSRF cookies. \\
+POST & /refresh & Rotate refresh token (cookie-based) and issue new access token. \\
+GET  & /me & Return current user identity (JWT required). \\
+POST & /packages & Create a package (requires \texttt{maintain} scope). \\
+GET  & /packages/:id & Fetch package + latest version (if any). \\
+POST & /packages/:id/versions & Publish a new version (requires maintainer/admin). \\
+GET  & /packages/:id/versions & List versions (newest first). \\
+POST & /packages/:id/versions/:ver/artifacts & Add artifact metadata (requires maintainer/admin). \\
+GET  & /artifacts/:artifact\_id/download & Redirect to blob URL and increment download counters. \\
+POST & /packages/:id/votes & Upsert a vote (JWT required). \\
+POST/GET & /packages/:id/comments & Create/list comments. \\
+GET  & /search & Search packages (FTS5 if available, otherwise LIKE fallback). \\
+\bottomrule
+\end{tabularx}
+\caption{Primary API routes from \texttt{internal/api/router.go}.}
+\end{table*}
+
+\subsection{Middleware: authentication, revocation, and CSRF}
+All requests pass through two middlewares in \path{internal/api/middleware.go}:
+\begin{enumerate}[leftmargin=*,label=\alph*)]
+\item \textbf{Authentication:} If the request has an \verb|Authorization: Bearer <jwt>| header, the server parses the token, then checks the \verb|tokens| table to see if the token has been revoked.
+\item \textbf{CSRF protection:} For state-changing requests (POST/PUT/PATCH/DELETE) the server enforces \verb|X-CSRF-Token| matching the \verb|ebuild_csrf| cookie, unless an Authorization header is present (API clients), or the path is exempted (login/register/refresh/revoke).
+\end{enumerate}
+
+\paragraph{Revocation check query}
+The revocation model stores only a SHA-256 hash of the raw token and checks \verb|revoked_at|.
+\begin{lstlisting}[language=SQL,caption={Token revocation check (AuthMiddleware)}]
+SELECT revoked_at
+FROM tokens
+WHERE token_hash = ?
+LIMIT 1;
+\end{lstlisting}
+
+\subsection{Authentication and token lifecycle}
+The authentication flow is implemented in \path{internal/api/handlers_auth.go}, \path{internal/api/handlers_refresh.go}, and \path{internal/api/handlers_tokens.go}.
+
+\begin{description}[leftmargin=*]
+\item[Register] Passwords are stored as bcrypt hashes. New users default to the maintainer role.
+\item[Login] Creates a short-lived access token (JWT) and a long-lived refresh token (JWT). The refresh token is stored as an \emph{HTTP-only cookie} and also recorded (hashed) in the database for revocation/audit. A second non-HTTP-only cookie stores the CSRF token.
+\item[Refresh] Rotates refresh tokens: the old token is revoked and a new token is issued. This creates an explicit parent\,$\to$\,child relationship through \verb|parent_token_hash|.
+\item[Generated tokens] Users can create long-lived tokens with explicit scopes (stored in \verb|tokens.scopes|).
+\end{description}
+
+\begin{lstlisting}[language=SQL,caption={User register and login queries}]
+INSERT INTO users (username, email, password_hash, role)
+VALUES (?, ?, ?, ?);
+
+SELECT id, username, email, password_hash, role
+FROM users
+WHERE username = ?;
+\end{lstlisting}
+
+
+\begin{lstlisting}[language=SQL,caption={Refresh token persistence and rotation}]
+INSERT INTO tokens (owner_user_id, token_hash, is_generated, scopes, created_at)
+VALUES (?, ?, 0, ?, datetime('now'));
+
+UPDATE tokens
+SET revoked_at = datetime('now')
+WHERE token_hash = ?;
+
+INSERT INTO tokens (owner_user_id, token_hash, is_generated, scopes, parent_token_hash, created_at)
+VALUES (?, ?, 0, ?, ?, datetime('now'));
+\end{lstlisting}
+
+\paragraph{Audit trail (token actions)}
+Token creation and revocation events are written to \verb|token_audit|. This provides an append-only history useful for incident response and debugging.
+\begin{lstlisting}[language=SQL,caption={Token audit writes}]
+INSERT INTO token_audit (action, token_hash, owner_user_id, actor_user_id, parent_token_hash, meta)
+VALUES (?, ?, ?, ?, ?, ?);
+
+INSERT INTO token_audit (action, token_hash, owner_user_id, actor_user_id)
+VALUES (?, ?, ?, ?);
+\end{lstlisting}
+
+\subsection{Packages and versions}
+Package operations are implemented in \path{internal/api/handlers_package.go} and \path{internal/api/handlers_versions.go}. Packages can be created by any authenticated user with the \verb|maintain| scope; publishing versions additionally requires the caller to be the package owner, a listed maintainer, or an admin.
+
+
+\begin{lstlisting}[language=SQL,caption={Package create + read queries}]
+INSERT INTO packages (name, description, created_by, token_required)
+VALUES (?, ?, ?, 1);
+
+SELECT id, name, description, created_by, token_required, created_at
+FROM packages
+WHERE id = ?;
+
+SELECT id, package_id, version, metadata, released_by, released_at, is_deprecated
+FROM package_versions
+WHERE package_id = ?
+ORDER BY released_at DESC
+LIMIT 1;
+\end{lstlisting}
+
+\paragraph{Maintainer/admin authorization checks}
+Authorization is done with lightweight point-queries:
+\begin{lstlisting}[language=SQL,caption={Maintainer/admin authorization queries}]
+SELECT role
+FROM users
+WHERE id = ?;
+
+SELECT created_by
+FROM packages
+WHERE id = ?;
+
+SELECT 1
+FROM package_maintainers
+WHERE package_id = ? AND user_id = ?
+LIMIT 1;
+\end{lstlisting}
+
+\paragraph{Publish and list versions}
+Version strings are validated using semantic versioning (\verb|github.com/Masterminds/semver|) before inserting.
+\begin{lstlisting}[language=SQL,caption={Version publish and listing queries}]
+INSERT INTO package_versions (package_id, version, metadata, released_by, released_at)
+VALUES (?, ?, ?, ?, ?);
+
+SELECT id, version, metadata, released_by, released_at, is_deprecated
+FROM package_versions
+WHERE package_id = ?
+ORDER BY released_at DESC;
+
+SELECT id, package_id, version, metadata, released_by, released_at, is_deprecated
+FROM package_versions
+WHERE package_id = ? AND version = ?
+LIMIT 1;
+\end{lstlisting}
+
+\subsection{Artifacts and download counters}
+Artifacts store metadata that points to externally hosted blobs (e.g., object storage). The download endpoint increments counters and then redirects the client to the blob URL.
+
+
+\begin{lstlisting}[language=SQL,caption={Artifact create and list queries}]
+SELECT id
+FROM package_versions
+WHERE package_id = ? AND version = ?;
+
+INSERT INTO artifacts (package_version_id, blob_url, filename, size_bytes, created_at)
+VALUES (?, ?, ?, ?, datetime('now'));
+
+SELECT id, blob_url, filename, size_bytes, created_at
+FROM artifacts
+WHERE package_version_id = ?;
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQL,caption={Artifact download lookup + counter increments}]
+SELECT a.id, a.package_version_id, a.blob_url, pv.package_id
+FROM artifacts a
+JOIN package_versions pv ON a.package_version_id = pv.id
+WHERE a.id = ?;
+
+UPDATE package_versions
+SET download_count = COALESCE(download_count,0) + 1
+WHERE id = ?;
+
+UPDATE packages
+SET download_count = COALESCE(download_count,0) + 1
+WHERE id = ?;
+\end{lstlisting}
+
+\subsection{Votes and comments}
+Votes are modeled as a \emph{unique} (user, package) pair and are implemented using a single UPSERT statement. Comments are appended and listed in reverse chronological order.
+
+\begin{lstlisting}[language=SQL,caption={Vote upsert query (one vote per user per package)}]
+INSERT INTO votes (user_id, package_id, value, created_at)
+VALUES (?, ?, ?, datetime('now'))
+ON CONFLICT(user_id, package_id)
+DO UPDATE SET value = excluded.value,
+							created_at = datetime('now');
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQL,caption={Comment create and list queries}]
+INSERT INTO comments (user_id, package_id, package_version_id, body, created_at)
+VALUES (?, ?, ?, ?, datetime('now'));
+
+SELECT id, user_id, package_version_id, body, created_at
+FROM comments
+WHERE package_id = ?
+ORDER BY created_at DESC;
+\end{lstlisting}
+
+\subsection{Search queries (FTS5 + fallback)}
+The search endpoint in \path{internal/api/handlers_search.go} supports:
+\begin{itemize}[leftmargin=*]
+\item full-text search with SQLite FTS5 (\verb|packages_fts|) when a query string \verb|q| is provided,
+\item a compatibility fallback using \verb|LIKE| when FTS5 is not available,
+\item optional filtering by category and bucket using join tables,
+\item sorting via \verb|sort=most_downloaded| (default), \verb|sort=random|, or creation time.
+\end{itemize}
+
+
+\begin{lstlisting}[language=SQL,caption={FTS5 search (q provided)}]
+SELECT p.id, p.name, p.description, p.download_count
+FROM packages p
+JOIN packages_fts f ON p.id = f.rowid
+WHERE f MATCH ?
+ORDER BY p.download_count DESC
+LIMIT ?;
+\end{lstlisting}
+
+
+\begin{lstlisting}[language=SQL,caption={LIKE-based fallback search}]
+SELECT p.id, p.name, p.description, p.download_count
+FROM packages p
+WHERE p.name LIKE ? OR p.description LIKE ?
+ORDER BY p.download_count DESC
+LIMIT ?;
+\end{lstlisting}
+
+
+\begin{lstlisting}[language=SQL,caption={Filter packages by category/bucket IDs}]
+SELECT id, name, description, download_count
+FROM packages
+WHERE id IN (SELECT package_id FROM package_categories WHERE category_id = ?)
+	AND id IN (SELECT package_id FROM package_buckets WHERE bucket_id = ?)
+ORDER BY download_count DESC
+LIMIT ?;
+\end{lstlisting}
+
+\subsection{Notes on parameter binding and portability}
+All SQL statements use parameter binding (placeholders) instead of string concatenation, which prevents SQL injection in handlers.
+
+\begin{itemize}[leftmargin=*]
+\item In the current development configuration (SQLite), placeholders use \verb|?|.
+\item In PostgreSQL, placeholders are typically \verb|$1, $2, ...|; therefore queries should be rebound (e.g., using \verb|sqlx.Rebind|) when running against PostgreSQL.
+\item The search endpoint uses a fixed \verb|LIMIT| (50) to cap load on read-heavy endpoints.
+\end{itemize}
+
+\newpage
+\onecolumn
+
+\appendix
+\section{EER Diagram}
+\label{app:eer}
+
+\begin{figure}[!htb]
+	\centering
+	\includegraphics[width=\textwidth]{erDiagram.png}
+	\caption{EER diagram of the ebuild-repo relational schema (core tables and relationships).}
+	\label{fig:eer}
+\end{figure}
+
+\newpage
+\printbibliography
+\end{document}
