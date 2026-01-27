@@ -14,7 +14,7 @@ func SetupRouter(db *sqlx.DB, signingKey []byte) *gin.Engine {
 	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/static/index.html") })
 
 	r.Use(AuthMiddleware(db, signingKey))
-	r.Use(CSRFMiddleware())
+	//r.Use(CSRFMiddleware())
 
 	// health
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
