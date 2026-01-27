@@ -635,6 +635,17 @@ All SQL statements use parameter binding (placeholders) instead of string concat
 \item The search endpoint uses a fixed \verb|LIMIT| (50) to cap load on read-heavy endpoints.
 \end{itemize}
 
+\section{Conclusion}
+\verb|ebuild-repo| demonstrates that a small, focused registry service can provide strong guarantees for package metadata management without requiring heavyweight infrastructure. The project combines a normalized relational schema, explicit migrations, and a resource-oriented REST API to support the core lifecycle operations needed by a build ecosystem: creating packages, publishing versioned manifests, attaching artifacts, searching, and tracking usage.
+
+From an implementation perspective, the system is intentionally structured around clear boundaries: handler functions validate and authorize requests, while the store layer encapsulates persistence and transactional logic. Authentication is implemented with JWTs and strengthened by practical operational safeguards: refresh-token rotation, server-side revocation checks via hashed tokens, and an append-only audit trail for token actions. Together, these choices improve debuggability and incident response while keeping the external contract simple for a CLI client.
+
+The dual-database development/production approach (SQLite for fast iteration, PostgreSQL for deployment) further supports rapid development while retaining a realistic production posture. However, this split also introduces portability considerations (placeholder rebinding, feature differences such as FTS5 availability) that must be handled carefully as the project evolves.
+
+Future work can improve robustness and usability in several areas: enforcing stricter schema consistency (e.g., nullable foreign keys vs. \verb|ON DELETE SET NULL|), expanding PostgreSQL-specific implementations for search and indexing, adding automated synchronization for the FTS content table, and tightening scope representation (e.g., normalizing scopes/allowed package lists instead of storing them as text blobs). In addition, more comprehensive tests, rate limiting, and structured observability (metrics and tracing) would strengthen the service for real-world usage.
+
+Overall, the project provides a practical foundation for a versioned package metadata registry tailored to an ebuild-based build system, with an emphasis on data integrity, auditability, and predictable API-driven workflows.
+
 \newpage
 \onecolumn
 
